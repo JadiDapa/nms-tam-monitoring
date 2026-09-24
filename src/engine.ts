@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import { SimulationService } from './admin/simulate.js';
 import { AlertEvaluator } from './alerts/evaluator.js';
 import { IncidentManager } from './alerts/incident-manager.js';
+import { NoopNotifier } from './alerts/noop-notifier.js';
 import { RuleService } from './alerts/rules.js';
 import { buildApp } from './api/app.js';
 import { SystemPingProbe } from './collectors/icmp/system-ping.js';
@@ -27,6 +29,7 @@ import { WebhookProvider } from './notifications/webhook.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { WorkerPool } from './scheduler/worker-pool.js';
 import { systemClock, type Clock } from './util/clock.js';
+import { FakeClock } from './util/fake-clock.js';
 import { errorMessage, type Logger } from './util/logger.js';
 import { VERSION } from './version.js';
 
@@ -55,6 +58,7 @@ export interface Engine {
     rules: RuleService;
     incidents: IncidentManager;
     metrics: MetricRepository;
+    simulation: SimulationService;
   };
   /** Start background work (scheduler, notification worker, retention) and listen for HTTP. */
   start(): Promise<void>;
@@ -103,6 +107,12 @@ export async function createEngine(o: EngineOptions): Promise<Engine> {
   const evaluator = new AlertEvaluator(db, rules, incidents, logger);
   const channels = new ChannelService(db, credentials);
 
+  // Simulation gets its OWN IncidentManager: same db/logger, but a no-op notifier (backfilled incidents must never
+  // page anyone) and a settable clock (so historical incidents get correct triggered_at/last_seen_at timestamps).
+  const simClock = new FakeClock(clock.now());
+  const simIncidents = new IncidentManager(db, new NoopNotifier(), logger, simClock);
+  const simulation = new SimulationService({ db, logger, devices, rules, metrics, incidents: simIncidents, clock: simClock });
+
   const polls = new PollService({ db, metrics, credentials, devices, icmp, tcp, snmp, logger, clock, listeners: [evaluator] });
   const deviceTester = new DeviceTester(icmp, tcp, snmp, credentials, config.TEST_MAX_CONCURRENCY);
 
@@ -140,6 +150,7 @@ export async function createEngine(o: EngineOptions): Promise<Engine> {
     notifications,
     rules,
     incidents,
+    simulation,
     version: VERSION,
     startedAt,
   });
@@ -158,7 +169,7 @@ export async function createEngine(o: EngineOptions): Promise<Engine> {
   return {
     app,
     scheduler,
-    services: { devices, polls, credentials, channels, notifications, rules, incidents, metrics },
+    services: { devices, polls, credentials, channels, notifications, rules, incidents, metrics, simulation },
 
     async start() {
       if (config.SCHEDULER_ENABLED) await scheduler.start();

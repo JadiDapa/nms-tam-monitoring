@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { AppError } from '../util/errors.js';
 import { errorMessage } from '../util/logger.js';
 import type { ApiDeps } from './deps.js';
+import { adminRoutes } from './routes/admin.js';
 import { alertRoutes } from './routes/alerts.js';
 import { channelRoutes } from './routes/channels.js';
 import { credentialRoutes } from './routes/credentials.js';
@@ -87,6 +88,7 @@ export async function buildApp(deps: ApiDeps): Promise<FastifyInstance> {
   await app.register(async (r) => channelRoutes(r, deps));
   await app.register(async (r) => alertRoutes(r, deps));
   await app.register(async (r) => incidentRoutes(r, deps));
+  await app.register(async (r) => adminRoutes(r, deps));
 
   return app;
 }

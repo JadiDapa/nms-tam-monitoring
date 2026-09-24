@@ -1,5 +1,6 @@
 import type { IncidentManager } from '../alerts/incident-manager.js';
 import type { RuleService } from '../alerts/rules.js';
+import type { SimulationService } from '../admin/simulate.js';
 import type { Config } from '../config/env.js';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { Database } from '../database/db.js';
@@ -32,6 +33,7 @@ export interface ApiDeps {
   notifications: NotificationService;
   rules: RuleService;
   incidents: IncidentManager;
+  simulation: SimulationService;
   version: string;
   startedAt: number;
 }
