@@ -1,4 +1,4 @@
-import type { SnmpAuth } from '../../credentials/schemas.js';
+import type { SnmpAuth } from '../../devices/snmp-auth.js';
 import type { CollectStatus, Reading } from '../types.js';
 
 export interface SnmpTarget {

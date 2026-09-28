@@ -90,10 +90,9 @@ describe('graceful shutdown of the real engine process', () => {
     const hole = await blackhole();
     holes.push(hole);
     const e = await start({ SHUTDOWN_TIMEOUT_MS: '30000', LOG_LEVEL: 'debug' });
-    const cred = (await e.api('POST', '/credentials', { name: 'c', type: 'snmp_v2c', secret: { community: 'public' } })).body;
     const dev = (
       await e.api('POST', '/devices', {
-        name: 'slow-snmp', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpCredentialId: cred.id, snmpPort: hole.port,
+        name: 'slow-snmp', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpAuth: { version: 'v2c', community: 'public' }, snmpPort: hole.port,
         polling: { pollIntervalSec: 5, timeoutMs: 8000, retryCount: 0 },
       })
     ).body;
@@ -128,11 +127,10 @@ describe('graceful shutdown of the real engine process', () => {
     holes.push(hole);
     const ICMP_HOST = '192.0.2.44'; // TEST-NET-1: never answers
     const e = await start({ SHUTDOWN_TIMEOUT_MS: '1000' });
-    const cred = (await e.api('POST', '/credentials', { name: 'c', type: 'snmp_v2c', secret: { community: 'public' } })).body;
     // a) SNMP against a device that never answers; would keep retransmitting for ~18 s
     const snmpDev = (
       await e.api('POST', '/devices', {
-        name: 'snmp-hang', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpCredentialId: cred.id, snmpPort: hole.port,
+        name: 'snmp-hang', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpAuth: { version: 'v2c', community: 'public' }, snmpPort: hole.port,
         polling: { pollIntervalSec: 5, timeoutMs: 3000, retryCount: 5 }, // up to 6 x 3 s = 18 s of retransmissions
       })
     ).body;

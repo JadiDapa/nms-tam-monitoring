@@ -1,7 +1,7 @@
 import * as snmp from 'net-snmp';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SnmpCollector } from '../src/collectors/snmp/collector.js';
-import type { SnmpAuth } from '../src/credentials/schemas.js';
+import type { SnmpAuth } from '../src/devices/snmp-auth.js';
 import { deadPort, FakeSnmpDevice, startGarbageResponder, type FakeDeviceOptions } from './helpers/fake-snmp-device.js';
 
 const FAST = { timeoutMs: 400, retries: 0 };

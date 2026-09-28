@@ -22,7 +22,7 @@ describe('schema', () => {
     ).rejects.toThrow();
   });
 
-  it('refuses SNMP monitoring without a credential', async () => {
+  it('refuses SNMP monitoring without SNMP auth', async () => {
     await expect(
       db.query(`insert into devices (name, host, snmp_enabled) values ('x', '10.0.0.1', true)`),
     ).rejects.toThrow();

@@ -114,7 +114,7 @@ export async function createHarness() {
   const box = new SecretBox({ activeKeyId: 'k1', activeKey: randomBytes(32).toString('base64') });
   const credentials = new CredentialService(db, box);
   const metrics = new PostgresMetricRepository(db);
-  const devices = new DeviceService(db, credentials, metrics);
+  const devices = new DeviceService(db, metrics);
 
   const icmp = new ScriptedIcmp();
   const tcp = new ScriptedTcp();
@@ -130,15 +130,14 @@ export async function createHarness() {
   rules.setRetireHandler(async (id, reason) => void (await incidents.resolveForRule(id, reason)));
   const evaluator = new AlertEvaluator(db, rules, incidents, logger);
   const channels = new ChannelService(db, credentials);
-  const polls = new PollService({ db, metrics, credentials, devices, icmp, tcp, snmp, logger, clock, listeners: [evaluator] });
+  const polls = new PollService({ db, metrics, devices, icmp, tcp, snmp, logger, clock, listeners: [evaluator] });
 
-  const snmpCred = await credentials.create({ name: 'snmp-ro', type: 'snmp_v2c', secret: { community: 'public-secret-123' } });
   const tgCred = await credentials.create({ name: 'tg', type: 'telegram_bot', secret: { botToken: '123456:ABC-secret-token' } });
 
   const newDevice = (over: Record<string, unknown> = {}) =>
     devices.create({
       name: 'core-rtr', host: '10.0.0.1', deviceType: 'router', enabled: true, icmpEnabled: true, tcpPorts: [],
-      snmpEnabled: true, snmpCredentialId: snmpCred.id, snmpPort: 161,
+      snmpEnabled: true, snmpAuth: { version: 'v2c', community: 'public-secret-123' }, snmpPort: 161,
       polling: { pollIntervalSec: 30, timeoutMs: 1000, retryCount: 0, failureThreshold: 3, recoveryThreshold: 2, icmpCount: 3 },
       ...over,
     } as never);
@@ -152,7 +151,7 @@ export async function createHarness() {
 
   return {
     db, clock, box, credentials, metrics, devices, icmp, tcp, snmp, telegram, webhook, notifications, incidents, rules,
-    evaluator, channels, polls, snmpCred, tgCred, newDevice, pollAndAdvance,
+    evaluator, channels, polls, tgCred, newDevice, pollAndAdvance,
     async close() {
       await db.close();
     },
@@ -176,7 +175,7 @@ export async function createRealHarness() {
   const box = new SecretBox({ activeKeyId: 'k1', activeKey: randomBytes(32).toString('base64') });
   const credentials = new CredentialService(db, box);
   const metrics = new PostgresMetricRepository(db);
-  const devices = new DeviceService(db, credentials, metrics);
+  const devices = new DeviceService(db, metrics);
 
   const webhook = new RecordingProvider('webhook');
   const notifications = new NotificationService(db, credentials, [webhook], { maxAttempts: 3, backoffBaseSec: 30, workerIntervalMs: 1000 }, logger, clock);
@@ -186,15 +185,13 @@ export async function createRealHarness() {
   const evaluator = new AlertEvaluator(db, rules, incidents, logger);
   const channels = new ChannelService(db, credentials);
   const polls = new PollService({
-    db, metrics, credentials, devices, icmp: new SystemPingProbe(), tcp: new NetTcpProbe(), snmp: new SnmpCollector(), logger, clock, listeners: [evaluator],
+    db, metrics, devices, icmp: new SystemPingProbe(), tcp: new NetTcpProbe(), snmp: new SnmpCollector(), logger, clock, listeners: [evaluator],
   });
-
-  const snmpCred = await credentials.create({ name: 'snmp-real', type: 'snmp_v2c', secret: { community: 'public' } });
 
   const newDevice = (snmpPort: number, over: Record<string, unknown> = {}) =>
     devices.create({
       name: 'real-dev', host: '127.0.0.1', deviceType: 'router', enabled: true, icmpEnabled: true, tcpPorts: [],
-      snmpEnabled: true, snmpCredentialId: snmpCred.id, snmpPort,
+      snmpEnabled: true, snmpAuth: { version: 'v2c', community: 'public' }, snmpPort,
       polling: { pollIntervalSec: 30, timeoutMs: 400, retryCount: 0, failureThreshold: 3, recoveryThreshold: 2, snmpFailureThreshold: 2, snmpRecoveryThreshold: 2, icmpCount: 1 },
       ...over,
     } as never);
@@ -206,7 +203,7 @@ export async function createRealHarness() {
   };
 
   return {
-    db, clock, credentials, metrics, devices, notifications, incidents, rules, channels, polls, webhook, snmpCred, newDevice, pollAndAdvance,
+    db, clock, credentials, metrics, devices, notifications, incidents, rules, channels, polls, webhook, newDevice, pollAndAdvance,
     async close() {
       await db.close();
     },

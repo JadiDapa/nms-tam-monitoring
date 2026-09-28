@@ -2,8 +2,6 @@ import type { IcmpProbe, IcmpResult } from '../collectors/icmp/types.js';
 import type { SnmpPollResult, SnmpProbe } from '../collectors/snmp/types.js';
 import { tcpShowsHostAlive, type TcpPortResult, type TcpProbe } from '../collectors/tcp/tcp-probe.js';
 import { errorReading, type CollectStatus, type Reading } from '../collectors/types.js';
-import type { CredentialService } from '../credentials/credential-service.js';
-import type { SnmpAuth } from '../credentials/schemas.js';
 import type { Database } from '../database/db.js';
 import { Metric } from '../metrics/names.js';
 import type { DeviceMetricSample, InterfaceSample, MetricRepository } from '../metrics/repository.js';
@@ -20,7 +18,6 @@ import type { DeviceConfig, PollListener, PollSnapshot } from './types.js';
 export interface PollDeps {
   db: Database;
   metrics: MetricRepository;
-  credentials: CredentialService;
   devices: DeviceService;
   icmp: IcmpProbe;
   tcp: TcpProbe;
@@ -393,16 +390,10 @@ export class PollService {
 
   private async runSnmp(device: DeviceConfig, signal?: AbortSignal): Promise<SnmpPollResult | null> {
     if (!device.snmpEnabled) return null;
-    if (!device.snmpCredentialId) return failedSnmp('error', 'SNMP is enabled but no credential is configured');
-    let auth: SnmpAuth;
-    try {
-      auth = await this.d.credentials.resolveSnmpAuth(device.snmpCredentialId);
-    } catch (err) {
-      return failedSnmp('error', `SNMP credential could not be loaded: ${errorMessage(err)}`);
-    }
+    if (!device.snmpAuth) return failedSnmp('error', 'SNMP is enabled but no SNMP auth is configured');
     try {
       return await this.d.snmp.poll(
-        { host: device.host, port: device.snmpPort, auth },
+        { host: device.host, port: device.snmpPort, auth: device.snmpAuth },
         { timeoutMs: device.polling.timeoutMs, retries: device.polling.retryCount, signal },
       );
     } catch (err) {

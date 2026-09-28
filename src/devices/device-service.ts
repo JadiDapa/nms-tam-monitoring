@@ -1,10 +1,10 @@
 import type { Database, Queryable } from '../database/db.js';
 import { toNumber } from '../database/db.js';
 import { badRequest, notFound } from '../util/errors.js';
-import type { CredentialService } from '../credentials/credential-service.js';
 import type { MetricRepository } from '../metrics/repository.js';
 import type { ScheduleEntry } from '../scheduler/scheduler.js';
 import type { CreateDeviceInput, UpdateDeviceInput } from './schemas.js';
+import type { SnmpAuth } from './snmp-auth.js';
 import { StateRepository } from './state-repository.js';
 import {
   DEFAULT_POLLING,
@@ -26,7 +26,7 @@ interface Row {
   icmp_enabled: boolean;
   tcp_ports: number[];
   snmp_enabled: boolean;
-  snmp_credential_id: string | null;
+  snmp_auth: SnmpAuth | null;
   snmp_port: number;
   sys_name: string | null;
   sys_descr: string | null;
@@ -61,7 +61,7 @@ const map = (r: Row): DeviceConfig => ({
   icmpEnabled: r.icmp_enabled,
   tcpPorts: (r.tcp_ports ?? []).map(Number),
   snmpEnabled: r.snmp_enabled,
-  snmpCredentialId: r.snmp_credential_id,
+  snmpAuth: r.snmp_auth,
   snmpPort: r.snmp_port,
   sysName: r.sys_name,
   sysDescr: r.sys_descr,
@@ -112,7 +112,6 @@ export class DeviceService {
 
   constructor(
     private readonly db: Database,
-    private readonly credentials: CredentialService,
     private readonly metrics: MetricRepository,
     private readonly states: StateRepository = new StateRepository(),
   ) {}
@@ -120,12 +119,6 @@ export class DeviceService {
   /** The scheduler registers here to pick up new/changed/removed devices immediately (not only on its next sync). */
   setChangeListener(fn: (deviceId: string) => void): void {
     this.onChange = fn;
-  }
-
-  private async assertSnmpCredential(id: string): Promise<void> {
-    const meta = await this.credentials.get(id).catch(() => null);
-    if (!meta) throw badRequest(`snmpCredentialId ${id} does not exist`);
-    if (!meta.type.startsWith('snmp_')) throw badRequest(`Credential ${id} is not an SNMP credential`);
   }
 
   private assertChecks(c: { icmpEnabled: boolean; snmpEnabled: boolean; tcpPorts: number[] }): void {
@@ -136,21 +129,18 @@ export class DeviceService {
 
   async create(input: CreateDeviceInput): Promise<DeviceConfig> {
     this.assertChecks(input);
-    if (input.snmpEnabled) {
-      if (!input.snmpCredentialId) throw badRequest('snmpCredentialId is required when snmpEnabled is true');
-      await this.assertSnmpCredential(input.snmpCredentialId);
-    }
+    if (input.snmpEnabled && !input.snmpAuth) throw badRequest('snmpAuth is required when snmpEnabled is true');
     const polling: PollingConfig = { ...DEFAULT_POLLING, ...input.polling } as PollingConfig;
 
     const id = await this.db.transaction(async (tx) => {
       const d = await tx.query<{ id: string }>(
         `insert into devices (name, host, device_type, vendor, model, location, enabled, icmp_enabled, tcp_ports,
-           snmp_enabled, snmp_credential_id, snmp_port)
+           snmp_enabled, snmp_auth, snmp_port)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
         [
           input.name, input.host, input.deviceType, input.vendor ?? null, input.model ?? null, input.location ?? null,
           input.enabled, input.icmpEnabled, input.tcpPorts, input.snmpEnabled,
-          input.snmpEnabled ? (input.snmpCredentialId ?? null) : null, input.snmpPort,
+          input.snmpEnabled ? JSON.stringify(input.snmpAuth ?? null) : null, input.snmpPort,
         ],
       );
       const deviceId = d.rows[0]!.id;
@@ -202,13 +192,10 @@ export class DeviceService {
       icmpEnabled: patch.icmpEnabled ?? current.icmpEnabled,
       snmpEnabled: patch.snmpEnabled ?? current.snmpEnabled,
       tcpPorts: patch.tcpPorts ?? current.tcpPorts,
-      snmpCredentialId: patch.snmpCredentialId === undefined ? current.snmpCredentialId : (patch.snmpCredentialId ?? null),
+      snmpAuth: patch.snmpAuth === undefined ? current.snmpAuth : (patch.snmpAuth ?? null),
     };
     this.assertChecks(next);
-    if (next.snmpEnabled) {
-      if (!next.snmpCredentialId) throw badRequest('snmpCredentialId is required when snmpEnabled is true');
-      await this.assertSnmpCredential(next.snmpCredentialId);
-    }
+    if (next.snmpEnabled && !next.snmpAuth) throw badRequest('snmpAuth is required when snmpEnabled is true');
 
     const sets: string[] = [];
     const params: unknown[] = [id];
@@ -226,9 +213,9 @@ export class DeviceService {
     if (patch.icmpEnabled !== undefined) set('icmp_enabled', patch.icmpEnabled);
     if (patch.tcpPorts !== undefined) set('tcp_ports', patch.tcpPorts);
     if (patch.snmpPort !== undefined) set('snmp_port', patch.snmpPort);
-    // keep snmp_enabled / credential consistent with the DB constraint
+    // keep snmp_enabled / snmp_auth consistent with the DB constraint
     set('snmp_enabled', next.snmpEnabled);
-    set('snmp_credential_id', next.snmpEnabled ? next.snmpCredentialId : null);
+    set('snmp_auth', next.snmpEnabled ? JSON.stringify(next.snmpAuth) : null);
     sets.push('updated_at = now()');
 
     await this.db.transaction(async (tx) => {

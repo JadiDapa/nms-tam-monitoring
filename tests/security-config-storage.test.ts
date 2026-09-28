@@ -1,8 +1,9 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config/env.js';
 import { CredentialService } from '../src/credentials/credential-service.js';
 import { SecretBox } from '../src/credentials/secret-box.js';
+import { snmpAuthSchema } from '../src/devices/snmp-auth.js';
 import { PostgresMetricRepository } from '../src/metrics/postgres-repository.js';
 import { createLogger } from '../src/util/logger.js';
 import { createTestDb } from './helpers/test-db.js';
@@ -68,25 +69,15 @@ describe('credential service', () => {
   });
   afterAll(async () => db.close());
 
-  it('resolves SNMP v1/v2c/v3 credentials into collector auth', async () => {
-    const v2 = await svc.create({ name: 'v2', type: 'snmp_v2c', secret: { community: 'c2' } });
-    const v1 = await svc.create({ name: 'v1', type: 'snmp_v1', secret: { community: 'c1' } });
-    const v3 = await svc.create({
-      name: 'v3', type: 'snmp_v3', secret: { username: 'mon', authProtocol: 'SHA256', authKey: 'auth-key-123', privProtocol: 'AES', privKey: 'priv-key-123' },
-    });
-    expect(await svc.resolveSnmpAuth(v2.id)).toEqual({ version: 'v2c', community: 'c2' });
-    expect(await svc.resolveSnmpAuth(v1.id)).toEqual({ version: 'v1', community: 'c1' });
-    expect(await svc.resolveSnmpAuth(v3.id)).toEqual({
-      version: 'v3', username: 'mon', authProtocol: 'SHA256', authKey: 'auth-key-123', privProtocol: 'AES', privKey: 'priv-key-123',
-    });
+  it('stores and reads back a channel secret', async () => {
+    const tg = await svc.create({ name: 'tg-read', type: 'telegram_bot', secret: { botToken: '123456:ABCDEFtoken' } });
+    const hook = await svc.create({ name: 'hook-read', type: 'webhook_secret', secret: { secret: 'hook-secret-123' } });
+    expect(await svc.getSecret(tg.id, 'telegram_bot')).toEqual({ botToken: '123456:ABCDEFtoken' });
+    expect(await svc.getSecret(hook.id, 'webhook_secret')).toEqual({ secret: 'hook-secret-123' });
   });
 
-  it('validates SNMPv3 rules (key pairing, minimum length, priv needs auth)', async () => {
-    const bad = (secret: object) => svc.create({ name: `bad-${randomUUID()}`, type: 'snmp_v3', secret });
-    await expect(bad({ username: 'u', authProtocol: 'SHA' })).rejects.toThrow(/does not match/);
-    await expect(bad({ username: 'u', authProtocol: 'SHA', authKey: 'short' })).rejects.toThrow(/does not match/);
-    await expect(bad({ username: 'u', privProtocol: 'AES', privKey: 'priv-key-123' })).rejects.toThrow(/does not match/);
-    await expect(svc.create({ name: 'noauth', type: 'snmp_v3', secret: { username: 'u' } })).resolves.toBeDefined(); // noAuthNoPriv is legal
+  it('refuses SNMP credential types (SNMP auth lives on the device)', async () => {
+    await expect(svc.create({ name: 'old-snmp', type: 'snmp_v2c' as never, secret: { community: 'c2' } })).rejects.toThrow(/Unknown credential type/);
   });
 
   it('metadata never contains the secret; duplicate names conflict', async () => {
@@ -96,21 +87,43 @@ describe('credential service', () => {
   });
 
   it('rotation replaces the secret; re-encryption moves rows to the active key', async () => {
-    const c = await svc.create({ name: 'rot', type: 'snmp_v2c', secret: { community: 'first' } });
-    await svc.rotateSecret(c.id, { community: 'second' });
-    expect(await svc.resolveSnmpAuth(c.id)).toEqual({ version: 'v2c', community: 'second' });
+    const c = await svc.create({ name: 'rot', type: 'webhook_secret', secret: { secret: 'first-secret' } });
+    await svc.rotateSecret(c.id, { secret: 'second-secret' });
+    expect(await svc.getSecret(c.id)).toEqual({ secret: 'second-secret' });
 
     const rotated = new CredentialService(db, new SecretBox({ activeKeyId: 'k2', activeKey: key(), oldKeys: { k1: oldKey } }));
-    expect(await rotated.resolveSnmpAuth(c.id)).toEqual({ version: 'v2c', community: 'second' }); // still readable
+    expect(await rotated.getSecret(c.id)).toEqual({ secret: 'second-secret' }); // still readable
     const moved = await rotated.reencryptAll();
     expect(moved).toBeGreaterThan(0);
     expect((await rotated.get(c.id)).keyId).toBe('k2');
-    expect(await rotated.resolveSnmpAuth(c.id)).toEqual({ version: 'v2c', community: 'second' });
+    expect(await rotated.getSecret(c.id)).toEqual({ secret: 'second-secret' });
   });
 
   it('a type mismatch is rejected', async () => {
     const tg = await svc.create({ name: 'tg2', type: 'telegram_bot', secret: { botToken: '123456:ABCDEFtoken' } });
-    await expect(svc.resolveSnmpAuth(tg.id)).rejects.toThrow(/not an SNMP credential/);
+    await expect(svc.getSecret(tg.id, 'webhook_secret')).rejects.toThrow(/expected "webhook_secret"/);
+  });
+});
+
+describe('SNMP auth (stored on the device)', () => {
+  it('accepts v1/v2c/v3', () => {
+    expect(snmpAuthSchema.parse({ version: 'v2c', community: 'c2' })).toEqual({ version: 'v2c', community: 'c2' });
+    expect(snmpAuthSchema.parse({ version: 'v1', community: 'c1' })).toEqual({ version: 'v1', community: 'c1' });
+    const v3 = { version: 'v3', username: 'mon', authProtocol: 'SHA256', authKey: 'auth-key-123', privProtocol: 'AES', privKey: 'priv-key-123' };
+    expect(snmpAuthSchema.parse(v3)).toEqual(v3);
+  });
+
+  it('validates SNMPv3 rules (key pairing, minimum length, priv needs auth)', () => {
+    const bad = (a: object) => snmpAuthSchema.safeParse({ version: 'v3', ...a }).success;
+    expect(bad({ username: 'u', authProtocol: 'SHA' })).toBe(false);
+    expect(bad({ username: 'u', authProtocol: 'SHA', authKey: 'short' })).toBe(false);
+    expect(bad({ username: 'u', privProtocol: 'AES', privKey: 'priv-key-123' })).toBe(false);
+    expect(bad({ username: 'u' })).toBe(true); // noAuthNoPriv is legal
+  });
+
+  it('rejects a community auth without a community, and unknown versions', () => {
+    expect(snmpAuthSchema.safeParse({ version: 'v2c' }).success).toBe(false);
+    expect(snmpAuthSchema.safeParse({ version: 'v4', community: 'x' }).success).toBe(false);
   });
 });
 

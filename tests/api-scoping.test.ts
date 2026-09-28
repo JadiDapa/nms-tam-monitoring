@@ -48,9 +48,9 @@ beforeAll(async () => {
   });
   engine = await createEngine({ config, db, logger: createLogger('silent'), providers: [new RecordingProvider('webhook')] });
 
-  credId = (await call('POST', '/credentials', { name: 'scope-cred', type: 'snmp_v2c', secret: { community: COMMUNITY } })).body.id;
+  credId = (await call('POST', '/credentials', { name: 'scope-cred', type: 'webhook_secret', secret: { secret: COMMUNITY } })).body.id;
   const mk = async (name: string) =>
-    (await call('POST', '/devices', { name, host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpCredentialId: credId, snmpPort: snmpDevice.port, polling: { timeoutMs: 800, retryCount: 0 } })).body.id as string;
+    (await call('POST', '/devices', { name, host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpAuth: { version: 'v2c', community: COMMUNITY }, snmpPort: snmpDevice.port, polling: { timeoutMs: 800, retryCount: 0 } })).body.id as string;
   devA = await mk('scope-a');
   devB = await mk('scope-b');
 });
@@ -79,7 +79,7 @@ describe('?ids= filters', () => {
   });
 
   it('credentials, channels and alert rules honour ids', async () => {
-    const otherCred = (await call('POST', '/credentials', { name: 'scope-other', type: 'snmp_v2c', secret: { community: 'other-community-99' } })).body.id;
+    const otherCred = (await call('POST', '/credentials', { name: 'scope-other', type: 'webhook_secret', secret: { secret: 'other-secret-99' } })).body.id;
     const creds = await call('GET', `/credentials?ids=${credId}`);
     expect(creds.body.items.map((c: { id: string }) => c.id)).toEqual([credId]);
     expect((await call('GET', '/credentials?ids=')).body.items).toEqual([]);

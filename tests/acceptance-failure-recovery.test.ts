@@ -14,7 +14,7 @@ beforeAll(async () => {
 });
 afterAll(async () => h.close());
 
-const noSnmp = { snmpEnabled: false, snmpCredentialId: null };
+const noSnmp = { snmpEnabled: false, snmpAuth: null };
 const incidents = async (deviceId: string, status?: 'ACTIVE' | 'RESOLVED') => (await h.incidents.list({ deviceId, status })).items;
 const reach = async (id: string) => (await h.devices.getState(id)).reachability.state;
 const snmpState = async (id: string) => (await h.devices.getState(id)).snmp.state;

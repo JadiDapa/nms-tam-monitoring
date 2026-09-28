@@ -70,9 +70,9 @@ describe('migration 003: legacy interface_down debounce', () => {
     expect((await db.query(`select 1 from schema_migrations where name = '003_legacy_interface_down_debounce.sql'`)).rowCount).toBe(0);
   });
 
-  it('applies exactly the 003 migration on top', async () => {
-    const applied = await runMigrations(db); // default dir: 001 + 002 already applied, so only 003 runs
-    expect(applied).toEqual(['003_legacy_interface_down_debounce.sql']);
+  it('applies 003 (and the later migrations) on top', async () => {
+    const applied = await runMigrations(db); // default dir: 001 + 002 already applied, so 003 and the later ones run
+    expect(applied).toEqual(['003_legacy_interface_down_debounce.sql', '004_device_snmp_auth.sql']);
   });
 
   it('converts ONLY the legacy interface_down rule that still had the old 1/1 default', async () => {
@@ -113,7 +113,7 @@ describe('migration 003: legacy interface_down debounce', () => {
   it('a fresh installation (no rules yet) migrates cleanly and new interface_down rules default to 2/2', async () => {
     const fresh = await createBareDb();
     try {
-      expect((await runMigrations(fresh)).length).toBe(3);
+      expect((await runMigrations(fresh)).length).toBe(4);
       const r = await fresh.query(`select count(*)::int as n from alert_rules`);
       expect((r.rows[0] as { n: number }).n).toBe(0);
     } finally {

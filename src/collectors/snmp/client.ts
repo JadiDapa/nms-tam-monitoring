@@ -1,6 +1,6 @@
 import net from 'node:net';
 import * as snmp from 'net-snmp';
-import type { SnmpAuth } from '../../credentials/schemas.js';
+import type { SnmpAuth } from '../../devices/snmp-auth.js';
 import type { CollectStatus } from '../types.js';
 import { isNoValue } from './codec.js';
 import type { SnmpOptions, SnmpTarget } from './types.js';

@@ -203,7 +203,7 @@ describe('incident lifecycle', () => {
   });
 
   it('device_down incident opens only after the state machine says DOWN, and resolves when UP again', async () => {
-    const dev = await h.newDevice({ name: 'down-rule', snmpEnabled: false, snmpCredentialId: null });
+    const dev = await h.newDevice({ name: 'down-rule', snmpEnabled: false, snmpAuth: null });
     await h.rules.create({
       name: 'Device unreachable', conditionType: 'device_down', severity: 'critical', triggerAfter: 1, clearAfter: 1,
       cooldownSec: 0, notifyOnRecovery: true, enabled: true, channelIds: [channelId], deviceId: dev.id,

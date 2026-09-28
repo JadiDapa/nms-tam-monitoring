@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../database/db.js';
 import { AppError, badRequest, conflict, notFound } from '../util/errors.js';
-import { CREDENTIAL_TYPES, secretSchemas, type CredentialType, type SnmpAuth } from './schemas.js';
+import { CREDENTIAL_TYPES, secretSchemas, type CredentialType } from './schemas.js';
 import type { SecretBox } from './secret-box.js';
 
 /** What the API is allowed to show about a credential. There is intentionally no secret field. */
@@ -104,7 +104,7 @@ export class CredentialService {
       // 23001 = restrict_violation (ON DELETE RESTRICT), 23503 = foreign_key_violation (NO ACTION)
       const code = (err as { code?: string }).code;
       if (code === '23001' || code === '23503') {
-        throw conflict('Credential is still used by a device or notification channel');
+        throw conflict('Credential is still used by a notification channel');
       }
       throw err;
     }
@@ -119,16 +119,6 @@ export class CredentialService {
       throw badRequest(`Credential ${id} is of type "${row.type}", expected "${expected}"`);
     }
     return JSON.parse(this.box.decrypt(row.secret_encrypted, row.id)) as Record<string, unknown>;
-  }
-
-  async resolveSnmpAuth(id: string): Promise<SnmpAuth> {
-    const r = await this.db.query<Row>('select * from credentials where id = $1', [id]);
-    if (r.rowCount === 0) throw notFound('Credential', id);
-    const row = r.rows[0]!;
-    if (!row.type.startsWith('snmp_')) throw badRequest(`Credential ${id} is not an SNMP credential`);
-    const secret = JSON.parse(this.box.decrypt(row.secret_encrypted, row.id)) as Record<string, string>;
-    if (row.type === 'snmp_v3') return { version: 'v3', ...(secret as object) } as SnmpAuth;
-    return { version: row.type === 'snmp_v1' ? 'v1' : 'v2c', community: secret.community! };
   }
 
   /** Re-encrypt every secret with the currently active key (after adding a new key to the ring). */

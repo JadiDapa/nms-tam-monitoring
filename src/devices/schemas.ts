@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidTarget } from '../collectors/icmp/system-ping.js';
+import { snmpAuthSchema } from './snmp-auth.js';
 import { DEVICE_TYPES } from './types.js';
 
 export const hostSchema = z
@@ -36,7 +37,7 @@ export const createDeviceSchema = z
     icmpEnabled: z.boolean().default(true),
     tcpPorts: tcpPorts.default([]),
     snmpEnabled: z.boolean().default(false),
-    snmpCredentialId: z.uuid().nullish(),
+    snmpAuth: snmpAuthSchema.nullish(),
     snmpPort: z.number().int().min(1).max(65535).default(161),
     polling: pollingSchema.default({}),
   })

@@ -8,7 +8,7 @@ beforeAll(async () => {
 afterAll(async () => h.close());
 
 const state = (id: string) => h.devices.getState(id);
-const noSnmp = { snmpEnabled: false, snmpCredentialId: null };
+const noSnmp = { snmpEnabled: false, snmpAuth: null };
 
 describe('reachability state machine at poll level (thresholds default 3 / 2)', () => {
   it('UP, UP, timeout, UP => no DOWN and no incident-worthy state', async () => {

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SystemPingProbe } from '../src/collectors/icmp/system-ping.js';
 import { SnmpCollector } from '../src/collectors/snmp/collector.js';
 import { NetTcpProbe } from '../src/collectors/tcp/tcp-probe.js';
-import type { SnmpAuth } from '../src/credentials/schemas.js';
+import type { SnmpAuth } from '../src/devices/snmp-auth.js';
 import { deadPort, FakeSnmpDevice } from './helpers/fake-snmp-device.js';
 
 const v2c: SnmpAuth = { version: 'v2c', community: 'public' };

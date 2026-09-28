@@ -1,4 +1,5 @@
 import type { CollectStatus } from '../collectors/types.js';
+import type { SnmpAuth } from './snmp-auth.js';
 import type { HealthSnapshot, HealthState, Transition } from './health-state.js';
 
 export const DEVICE_TYPES = ['router', 'switch', 'firewall', 'server', 'access_point', 'gateway', 'unknown'] as const;
@@ -40,7 +41,8 @@ export interface DeviceConfig {
   icmpEnabled: boolean;
   tcpPorts: number[];
   snmpEnabled: boolean;
-  snmpCredentialId: string | null;
+  /** typed in when the device was added; stored as plain JSON */
+  snmpAuth: SnmpAuth | null;
   snmpPort: number;
   /** discovered from the device itself (null until the first successful SNMP poll) */
   sysName: string | null;

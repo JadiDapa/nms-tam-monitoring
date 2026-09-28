@@ -58,7 +58,7 @@ describe('poll pipeline (real data only)', () => {
   });
 
   it('ICMP failure: 100% loss is real, latency is unavailable (not zero, not invented)', async () => {
-    const dev = await h.newDevice({ name: 'icmp-dead', snmpEnabled: false, snmpCredentialId: null });
+    const dev = await h.newDevice({ name: 'icmp-dead', snmpEnabled: false, snmpAuth: null });
     h.icmp.result = icmpDown();
     await h.polls.poll(dev.id);
     const latest = Object.fromEntries((await h.metrics.latestDeviceMetrics(dev.id)).map((m) => [m.metric, m]));
@@ -78,7 +78,7 @@ describe('poll pipeline (real data only)', () => {
   });
 
   it('a single failed poll does NOT take a device DOWN; three consecutive do; two successes recover it', async () => {
-    const dev = await h.newDevice({ name: 'flappy', snmpEnabled: false, snmpCredentialId: null });
+    const dev = await h.newDevice({ name: 'flappy', snmpEnabled: false, snmpAuth: null });
     h.icmp.result = icmpOk();
     await h.polls.poll(dev.id);
     expect((await stateOf(dev.id)).reachability.state).toBe('UP');
@@ -115,14 +115,14 @@ describe('poll pipeline (real data only)', () => {
   });
 
   it('records the poll error text for operators', async () => {
-    const dev = await h.newDevice({ name: 'err-text', snmpEnabled: false, snmpCredentialId: null });
+    const dev = await h.newDevice({ name: 'err-text', snmpEnabled: false, snmpAuth: null });
     h.icmp.result = icmpDown();
     await h.polls.poll(dev.id);
     expect((await stateOf(dev.id)).lastError).toMatch(/icmp: No echo reply/);
   });
 
   it('tcp-only device: open/closed ports count as alive, timeouts as unavailable', async () => {
-    const dev = await h.newDevice({ name: 'tcp-only', icmpEnabled: false, snmpEnabled: false, snmpCredentialId: null, tcpPorts: [22, 443] });
+    const dev = await h.newDevice({ name: 'tcp-only', icmpEnabled: false, snmpEnabled: false, snmpAuth: null, tcpPorts: [22, 443] });
     h.tcp.result = (port) =>
       port === 22
         ? { port, status: 'open', latencyMs: 3.1, error: null }
@@ -136,7 +136,7 @@ describe('poll pipeline (real data only)', () => {
   });
 
   it('a refused TCP connection proves the host is alive, but the port closed (value 0)', async () => {
-    const dev = await h.newDevice({ name: 'refused', icmpEnabled: false, snmpEnabled: false, snmpCredentialId: null, tcpPorts: [8080] });
+    const dev = await h.newDevice({ name: 'refused', icmpEnabled: false, snmpEnabled: false, snmpAuth: null, tcpPorts: [8080] });
     h.tcp.result = (port) => ({ port, status: 'closed', latencyMs: 1, error: 'Connection refused' });
     const r = await h.polls.poll(dev.id);
     expect(r.reachable).toBe(true);
@@ -244,16 +244,12 @@ describe('interface traffic', () => {
 });
 
 describe('device configuration rules', () => {
-  it('refuses SNMP monitoring without an SNMP credential', async () => {
-    await expect(h.newDevice({ name: 'x', snmpCredentialId: null })).rejects.toThrow(/snmpCredentialId/);
+  it('refuses SNMP monitoring without SNMP auth', async () => {
+    await expect(h.newDevice({ name: 'x', snmpAuth: null })).rejects.toThrow(/snmpAuth/);
   });
 
   it('refuses a device with nothing to check', async () => {
-    await expect(h.newDevice({ name: 'x', icmpEnabled: false, snmpEnabled: false, snmpCredentialId: null, tcpPorts: [] })).rejects.toThrow(/at least one check/i);
-  });
-
-  it('refuses a non-SNMP credential for SNMP', async () => {
-    await expect(h.newDevice({ name: 'x', snmpCredentialId: h.tgCred.id })).rejects.toThrow(/not an SNMP credential/);
+    await expect(h.newDevice({ name: 'x', icmpEnabled: false, snmpEnabled: false, snmpAuth: null, tcpPorts: [] })).rejects.toThrow(/at least one check/i);
   });
 
   it('per-device intervals reach the scheduler', async () => {

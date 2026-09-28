@@ -79,11 +79,11 @@ async function engine<T>(path: string, init: RequestInit = {}): Promise<T> {
 // "Test device now" before saving
 const result = await engine('/devices/test', {
   method: 'POST',
-  body: JSON.stringify({ host: '10.0.0.1', icmp: true, tcpPorts: [22, 443], snmp: { credentialId, port: 161 } }),
+  body: JSON.stringify({ host: '10.0.0.1', icmp: true, tcpPorts: [22, 443], snmp: { auth: { version: 'v2c', community: 'public' }, port: 161 } }),
 });
 ```
 
-Typical flow for "add device": `POST /credentials` (SNMP secret) → `POST /devices/test` → if the operator accepts the
+Typical flow for "add device": `POST /devices/test` (SNMP auth is typed in on the request) → if the operator accepts the
 real result, `POST /devices` → `POST /devices/:id/poll` for an immediate first reading.
 
 ## API
@@ -110,7 +110,7 @@ All endpoints except `/health` need `Authorization: Bearer <key>` or `X-API-Key:
 | GET | `/alerts` | Alert **rules** with active-incident counts |
 | POST/GET/PATCH/DELETE | `/alerts[/:id]` | Rule management |
 | POST/GET/PATCH/DELETE | `/channels[/:id]` · POST `/channels/:id/test` | Notification channels (telegram, webhook, email\*) |
-| POST/GET/DELETE | `/credentials[/:id]` · PUT `/credentials/:id/secret` | **Write-only** secrets (SNMP v1/v2c/v3, Telegram bot, webhook secret) |
+| POST/GET/DELETE | `/credentials[/:id]` · PUT `/credentials/:id/secret` | **Write-only** notification secrets (Telegram bot token, webhook secret). SNMP auth is not a credential: it is sent as `snmpAuth` when the device is created and stored on the device, unencrypted |
 
 \**`?ids=a,b,c` filter.** `GET /devices`, `/credentials`, `/channels`, `/alerts`, `/fleet` accept it, and `/incidents` accepts `deviceIds`. This is how the web app asks for only the objects one client owns. Absent = no filter; present but empty = matches **nothing** (never "everything"). The engine itself has no notion of clients; who owns what is the web app's job.
 

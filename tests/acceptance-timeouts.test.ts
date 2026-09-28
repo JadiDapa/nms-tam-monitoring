@@ -1,7 +1,7 @@
 import dgram from 'node:dgram';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SnmpCollector } from '../src/collectors/snmp/collector.js';
-import type { SnmpAuth } from '../src/credentials/schemas.js';
+import type { SnmpAuth } from '../src/devices/snmp-auth.js';
 import { Scheduler } from '../src/scheduler/scheduler.js';
 import { WorkerPool } from '../src/scheduler/worker-pool.js';
 import { systemClock } from '../src/util/clock.js';

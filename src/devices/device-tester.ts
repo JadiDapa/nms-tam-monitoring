@@ -3,11 +3,10 @@ import type { IcmpProbe, IcmpResult } from '../collectors/icmp/types.js';
 import type { SnmpPollResult, SnmpProbe } from '../collectors/snmp/types.js';
 import { tcpShowsHostAlive, type TcpPortResult, type TcpProbe } from '../collectors/tcp/tcp-probe.js';
 import type { Reading } from '../collectors/types.js';
-import type { CredentialService } from '../credentials/credential-service.js';
-import type { SnmpAuth } from '../credentials/schemas.js';
 import { AppError, badRequest } from '../util/errors.js';
 import { errorMessage } from '../util/logger.js';
 import { hostSchema } from './schemas.js';
+import { snmpAuthSchema } from './snmp-auth.js';
 
 export const testDeviceSchema = z
   .object({
@@ -17,10 +16,7 @@ export const testDeviceSchema = z
     tcpPorts: z.array(z.number().int().min(1).max(65535)).max(20).default([]),
     snmp: z
       .object({
-        credentialId: z.uuid().optional(),
-        // accepted alias: the integration contract calls it communityCredentialId
-        communityCredentialId: z.uuid().optional(),
-        version: z.enum(['v1', 'v2c', 'v3']).optional(),
+        auth: snmpAuthSchema,
         port: z.number().int().min(1).max(65535).default(161),
       })
       .strict()
@@ -69,7 +65,6 @@ export class DeviceTester {
     private readonly icmp: IcmpProbe,
     private readonly tcp: TcpProbe,
     private readonly snmp: SnmpProbe,
-    private readonly credentials: CredentialService,
     private readonly maxConcurrent: number,
   ) {}
 
@@ -85,22 +80,10 @@ export class DeviceTester {
     }
   }
 
-  private async resolveAuth(snmp: NonNullable<TestDeviceInput['snmp']>): Promise<SnmpAuth> {
-    const id = snmp.credentialId ?? snmp.communityCredentialId;
-    if (!id) throw badRequest('snmp.credentialId is required to test SNMP');
-    const auth = await this.credentials.resolveSnmpAuth(id);
-    if (snmp.version && snmp.version !== auth.version) {
-      throw badRequest(`Credential is ${auth.version} but snmp.version is ${snmp.version}`);
-    }
-    return auth;
-  }
-
   private async run(input: TestDeviceInput): Promise<TestDeviceResult> {
     if (!input.icmp && input.tcpPorts.length === 0 && !input.snmp) {
       throw badRequest('Nothing to test: enable icmp, add tcpPorts, or provide snmp');
     }
-    const auth = input.snmp ? await this.resolveAuth(input.snmp) : null;
-
     const icmpP = input.icmp
       ? (async () => {
           const opts = { count: input.icmpCount, timeoutMs: input.timeoutMs };
@@ -112,9 +95,9 @@ export class DeviceTester {
     const tcpP = input.tcpPorts.length > 0
       ? this.tcp.check(input.host, input.tcpPorts, { timeoutMs: input.timeoutMs, retries: input.retries })
       : Promise.resolve(null);
-    const snmpP = input.snmp && auth
+    const snmpP = input.snmp
       ? this.snmp
-          .poll({ host: input.host, port: input.snmp.port, auth }, { timeoutMs: input.timeoutMs, retries: input.retries })
+          .poll({ host: input.host, port: input.snmp.port, auth: input.snmp.auth }, { timeoutMs: input.timeoutMs, retries: input.retries })
           .catch((err): SnmpPollResult => ({
             status: 'error',
             error: errorMessage(err),

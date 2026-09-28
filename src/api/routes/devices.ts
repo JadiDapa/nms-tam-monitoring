@@ -9,8 +9,9 @@ import { idAndChildParams, idList, idParams, paging, timeRange } from './util.js
 const listQuery = z.object({ enabled: z.enum(['true', 'false']).optional(), ids: idList.optional(), ...paging });
 const fleetQuery = z.object({ ids: idList.optional() });
 const ifaceQuery = z.object({ active: z.enum(['true', 'false']).optional() });
-/** bucketSec turns the raw history into one aggregated row per time bucket (avg / max), which is what charts need */
-const bucketSec = z.coerce.number().int().min(5).max(86400).optional();
+/** bucketSec turns the raw history into one aggregated row per time bucket (avg / max), which is what charts need.
+ * Capped at 31 days so a "monthly" chart bucket (a fixed ~30-day width, see nms-tam's lib/date-range.ts) fits. */
+const bucketSec = z.coerce.number().int().min(5).max(31 * 86400).optional();
 const metricsQuery = z.object({ metric: z.string().max(100).optional(), dimension: z.string().max(100).optional(), limit: paging.limit, bucketSec, ...timeRange });
 const samplesQuery = z.object({ limit: paging.limit, bucketSec, ...timeRange });
 const monitoredBody = z.object({ monitored: z.boolean() }).strict();
@@ -56,7 +57,7 @@ export function deviceRoutes(app: FastifyInstance, d: ApiDeps): void {
       icmp: dev.icmpEnabled,
       icmpCount: dev.polling.icmpCount,
       tcpPorts: dev.tcpPorts,
-      snmp: dev.snmpEnabled && dev.snmpCredentialId ? { credentialId: dev.snmpCredentialId, port: dev.snmpPort } : undefined,
+      snmp: dev.snmpEnabled && dev.snmpAuth ? { auth: dev.snmpAuth, port: dev.snmpPort } : undefined,
       timeoutMs: dev.polling.timeoutMs,
       retries: dev.polling.retryCount,
     };

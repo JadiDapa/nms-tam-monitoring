@@ -125,7 +125,7 @@ Configured per device (`polling_config`), with these defaults: `timeoutMs = 3000
 ## One poll, step by step
 
 1. **Scheduler** decides a device is due (never twice at once) and submits a job to the worker pool.
-2. **PollService** loads the device + polling config, decrypts the SNMP credential (in memory only).
+2. **PollService** loads the device + polling config, reads the device's `snmp_auth` (stored plain on the device row).
 3. ICMP, TCP and SNMP run in parallel with the device's own `timeout` and `retryCount`, all cancellable.
 4. Results become **metric samples**. Only genuinely measured values get `status = ok`; everything else is
    `unavailable | error | not_supported` with `value = null` and the real error text.

@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import { SimulationService } from './admin/simulate.js';
 import { AlertEvaluator } from './alerts/evaluator.js';
 import { IncidentManager } from './alerts/incident-manager.js';
-import { NoopNotifier } from './alerts/noop-notifier.js';
 import { RuleService } from './alerts/rules.js';
 import { buildApp } from './api/app.js';
 import { SystemPingProbe } from './collectors/icmp/system-ping.js';
@@ -29,7 +28,6 @@ import { WebhookProvider } from './notifications/webhook.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { WorkerPool } from './scheduler/worker-pool.js';
 import { systemClock, type Clock } from './util/clock.js';
-import { FakeClock } from './util/fake-clock.js';
 import { errorMessage, type Logger } from './util/logger.js';
 import { VERSION } from './version.js';
 
@@ -77,7 +75,7 @@ export async function createEngine(o: EngineOptions): Promise<Engine> {
   });
   const credentials = new CredentialService(db, box);
   const metrics = o.metrics ?? new PostgresMetricRepository(db);
-  const devices = new DeviceService(db, credentials, metrics);
+  const devices = new DeviceService(db, metrics);
   const interfaces = new InterfaceRepository();
 
   const icmp = o.icmp ?? new SystemPingProbe();
@@ -107,14 +105,10 @@ export async function createEngine(o: EngineOptions): Promise<Engine> {
   const evaluator = new AlertEvaluator(db, rules, incidents, logger);
   const channels = new ChannelService(db, credentials);
 
-  // Simulation gets its OWN IncidentManager: same db/logger, but a no-op notifier (backfilled incidents must never
-  // page anyone) and a settable clock (so historical incidents get correct triggered_at/last_seen_at timestamps).
-  const simClock = new FakeClock(clock.now());
-  const simIncidents = new IncidentManager(db, new NoopNotifier(), logger, simClock);
-  const simulation = new SimulationService({ db, logger, devices, rules, metrics, incidents: simIncidents, clock: simClock });
+  const simulation = new SimulationService({ db, logger, devices, interfaces, metrics });
 
-  const polls = new PollService({ db, metrics, credentials, devices, icmp, tcp, snmp, logger, clock, listeners: [evaluator] });
-  const deviceTester = new DeviceTester(icmp, tcp, snmp, credentials, config.TEST_MAX_CONCURRENCY);
+  const polls = new PollService({ db, metrics, devices, icmp, tcp, snmp, logger, clock, listeners: [evaluator] });
+  const deviceTester = new DeviceTester(icmp, tcp, snmp, config.TEST_MAX_CONCURRENCY);
 
   const pool = new WorkerPool(config.SCHEDULER_CONCURRENCY);
   const scheduler = new Scheduler({

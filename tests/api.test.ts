@@ -9,6 +9,7 @@ import { createTestDb } from './helpers/test-db.js';
 
 const API_KEY = 'test-api-key-0123456789-abcdefghij';
 const COMMUNITY = 'very-secret-community-9876';
+const HOOK_SECRET = 'very-secret-webhook-4321';
 
 let engine: Engine;
 let snmpDevice: FakeSnmpDevice;
@@ -92,33 +93,33 @@ describe('authentication', () => {
 
 describe('credentials are write-only', () => {
   it('never returns the secret, in any response', async () => {
-    const created = await call('POST', '/credentials', { name: 'lab-snmp', type: 'snmp_v2c', secret: { community: COMMUNITY } });
+    const created = await call('POST', '/credentials', { name: 'lab-hook', type: 'webhook_secret', secret: { secret: HOOK_SECRET } });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ name: 'lab-snmp', type: 'snmp_v2c', hasSecret: true, keyId: 'k1' });
-    expect(created.raw).not.toContain(COMMUNITY);
+    expect(created.body).toMatchObject({ name: 'lab-hook', type: 'webhook_secret', hasSecret: true, keyId: 'k1' });
+    expect(created.raw).not.toContain(HOOK_SECRET);
 
     const list = await call('GET', '/credentials');
     const one = await call('GET', `/credentials/${created.body.id}`);
-    expect(list.raw).not.toContain(COMMUNITY);
-    expect(one.raw).not.toContain(COMMUNITY);
+    expect(list.raw).not.toContain(HOOK_SECRET);
+    expect(one.raw).not.toContain(HOOK_SECRET);
     expect(Object.keys(one.body)).not.toContain('secret');
 
     // and it is really encrypted at rest
     const row = await db.query<{ secret_encrypted: string }>('select secret_encrypted from credentials where id = $1', [created.body.id]);
-    expect(row.rows[0]!.secret_encrypted).not.toContain(COMMUNITY);
+    expect(row.rows[0]!.secret_encrypted).not.toContain(HOOK_SECRET);
     expect(row.rows[0]!.secret_encrypted.startsWith('v1.k1.')).toBe(true);
   });
 
   it('validation errors do not echo submitted secrets', async () => {
-    const r = await call('POST', '/credentials', { name: 'bad', type: 'snmp_v3', secret: { username: 'u', authProtocol: 'SHA', authKey: 'short' } });
+    const r = await call('POST', '/credentials', { name: 'bad', type: 'telegram_bot', secret: { botToken: 'short' } });
     expect(r.status).toBe(400);
     expect(r.raw).not.toContain('"short"');
     expect(r.body.error.code).toBe('INVALID_SECRET');
   });
 
   it('refuses to delete a credential that is in use', async () => {
-    const cred = (await call('POST', '/credentials', { name: 'in-use', type: 'snmp_v2c', secret: { community: 'abc-def-ghi' } })).body;
-    await call('POST', '/devices', { name: 'uses-cred', host: '127.0.0.1', snmpEnabled: true, snmpCredentialId: cred.id });
+    const cred = (await call('POST', '/credentials', { name: 'in-use', type: 'webhook_secret', secret: { secret: 'abc-def-ghi' } })).body;
+    await call('POST', '/channels', { name: 'uses-cred', type: 'webhook', config: { url: 'https://hooks.example.com/x' }, credentialId: cred.id });
     const del = await call('DELETE', `/credentials/${cred.id}`);
     expect(del.status).toBe(409);
   });
@@ -145,16 +146,11 @@ describe('request validation', () => {
 });
 
 describe('POST /devices/test (stateless)', () => {
-  let credId: string;
-  beforeAll(async () => {
-    credId = (await call('POST', '/credentials', { name: 'test-cred', type: 'snmp_v2c', secret: { community: COMMUNITY } })).body.id;
-  });
-
   it('returns REAL results from a real SNMP agent + real ICMP, and saves nothing', async () => {
     const before = await db.query<{ n: string }>('select (select count(*) from devices)::text || \'/\' || (select count(*) from device_metric_samples)::text as n');
     const r = await call('POST', '/devices/test', {
       host: '127.0.0.1', icmp: true, icmpCount: 1, tcpPorts: [], timeoutMs: 800,
-      snmp: { communityCredentialId: credId, port: snmpDevice.port },
+      snmp: { auth: { version: 'v2c', community: COMMUNITY }, port: snmpDevice.port },
     });
     expect(r.status).toBe(200);
     expect(r.body.reachable).toBe(true);
@@ -174,7 +170,7 @@ describe('POST /devices/test (stateless)', () => {
 
   it('reports the actual failure for an unreachable SNMP agent (nothing invented)', async () => {
     const r = await call('POST', '/devices/test', {
-      host: '127.0.0.1', icmp: false, timeoutMs: 400, snmp: { credentialId: credId, port: await deadPort() },
+      host: '127.0.0.1', icmp: false, timeoutMs: 400, snmp: { auth: { version: 'v2c', community: COMMUNITY }, port: await deadPort() },
     });
     expect(r.status).toBe(200);
     expect(r.body.reachable).toBe(false);
@@ -192,9 +188,9 @@ describe('POST /devices/test (stateless)', () => {
     expect(r.body.icmp).toMatchObject({ status: 'unavailable', packetLossPct: 100, avgMs: null });
   });
 
-  it('rejects a test that checks nothing, and unknown credentials', async () => {
+  it('rejects a test that checks nothing, and invalid SNMP auth', async () => {
     expect((await call('POST', '/devices/test', { host: '127.0.0.1', icmp: false })).status).toBe(400);
-    expect((await call('POST', '/devices/test', { host: '127.0.0.1', snmp: { credentialId: '00000000-0000-4000-8000-000000000000' } })).status).toBe(404);
+    expect((await call('POST', '/devices/test', { host: '127.0.0.1', snmp: { auth: { version: 'v2c' } } })).status).toBe(400);
   });
 
   it('cannot be pointed at arbitrary flags / commands', async () => {
@@ -205,21 +201,15 @@ describe('POST /devices/test (stateless)', () => {
 
 describe('device lifecycle, polling and history through the API', () => {
   let deviceId: string;
-  let credId: string;
-
-  beforeAll(async () => {
-    credId = (await call('POST', '/credentials', { name: 'dev-cred', type: 'snmp_v2c', secret: { community: COMMUNITY } })).body.id;
-  });
 
   it('creates a device; identity fields are null until the device reports them', async () => {
     const r = await call('POST', '/devices', {
-      name: 'lab-rtr', host: '127.0.0.1', deviceType: 'router', snmpEnabled: true, snmpCredentialId: credId, snmpPort: snmpDevice.port,
+      name: 'lab-rtr', host: '127.0.0.1', deviceType: 'router', snmpEnabled: true, snmpAuth: { version: 'v2c', community: COMMUNITY }, snmpPort: snmpDevice.port,
       icmpEnabled: true, polling: { pollIntervalSec: 15, timeoutMs: 800, retryCount: 0, failureThreshold: 2, recoveryThreshold: 1, icmpCount: 1 },
     });
     expect(r.status).toBe(201);
     deviceId = r.body.id;
-    expect(r.body).toMatchObject({ sysName: null, sysDescr: null, polling: { pollIntervalSec: 15, failureThreshold: 2 }, snmpCredentialId: credId });
-    expect(r.raw).not.toContain(COMMUNITY);
+    expect(r.body).toMatchObject({ sysName: null, sysDescr: null, polling: { pollIntervalSec: 15, failureThreshold: 2 }, snmpAuth: { version: 'v2c', community: COMMUNITY } });
   });
 
   it('POST /devices/:id/test uses the stored configuration and writes nothing', async () => {
@@ -307,10 +297,9 @@ describe('alerts, incidents and notifications through the API', () => {
   let ruleId: string;
 
   beforeAll(async () => {
-    const cred = (await call('POST', '/credentials', { name: 'inc-cred', type: 'snmp_v2c', secret: { community: COMMUNITY } })).body.id;
     deviceId = (
       await call('POST', '/devices', {
-        name: 'inc-dev', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpCredentialId: cred, snmpPort: snmpDevice.port,
+        name: 'inc-dev', host: '127.0.0.1', icmpEnabled: false, snmpEnabled: true, snmpAuth: { version: 'v2c', community: COMMUNITY }, snmpPort: snmpDevice.port,
         polling: { pollIntervalSec: 15, timeoutMs: 800, retryCount: 0 },
       })
     ).body.id;
