@@ -248,6 +248,12 @@ export class PostgresMetricRepository implements MetricRepository {
     return r.rows.map(toInterfaceSample);
   }
 
+  async firstInterfaceSampleAt(deviceId: string): Promise<Date | null> {
+    const r = await this.db.query<{ t: Date | null }>('select min(time) as t from interface_samples where device_id = $1', [deviceId]);
+    const t = r.rows[0]?.t ?? null;
+    return t ? new Date(t) : null;
+  }
+
   async purgeOlderThan(cutoff: Date): Promise<{ deviceMetrics: number; interfaceSamples: number }> {
     const a = await this.db.query('delete from device_metric_samples where time < $1', [cutoff]);
     const b = await this.db.query('delete from interface_samples where time < $1', [cutoff]);

@@ -101,6 +101,9 @@ export interface MetricRepository {
   /** most recent sample of every interface of a device */
   latestInterfaceSamples(deviceId: string): Promise<InterfaceSample[]>;
 
+  /** earliest interface sample ever recorded for a device (real poll or backfilled by /admin/simulate), or null if none */
+  firstInterfaceSampleAt(deviceId: string): Promise<Date | null>;
+
   /** retention */
   purgeOlderThan(cutoff: Date): Promise<{ deviceMetrics: number; interfaceSamples: number }>;
 }

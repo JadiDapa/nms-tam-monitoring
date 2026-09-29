@@ -6,6 +6,7 @@ import type { ScheduleEntry } from '../scheduler/scheduler.js';
 import type { CreateDeviceInput, UpdateDeviceInput } from './schemas.js';
 import type { SnmpAuth } from './snmp-auth.js';
 import { StateRepository } from './state-repository.js';
+import type { HealthSnapshot } from './health-state.js';
 import {
   DEFAULT_POLLING,
   type DeviceConfig,
@@ -13,6 +14,18 @@ import {
   type DeviceType,
   type PollingConfig,
 } from './types.js';
+
+/**
+ * A device whose real checks never come back positive (a dummy target fed by POST /admin/simulate) would otherwise
+ * sit DOWN forever, with no "since" a client can build an uptime figure from. When there is at least one interface
+ * sample (real or simulated) but reachability has never gone UP through a real poll, report it as UP anyway, with
+ * "since" pinned to the first sample ever written — "uptime" for such a device is "since we started feeding it data".
+ * A device that DOES answer real polls is unaffected: this only fills in for one that has never once succeeded.
+ */
+function withSimulatedFallback(reachability: HealthSnapshot, firstSampleAt: Date | null): HealthSnapshot {
+  if (reachability.state === 'UP' || reachability.state === 'RECOVERING' || firstSampleAt === null) return reachability;
+  return { state: 'UP', failures: 0, successes: 0, since: firstSampleAt };
+}
 
 interface Row {
   id: string;
@@ -257,13 +270,21 @@ export class DeviceService {
   /** Combined view for GET /devices/:id/status */
   async status(id: string) {
     const device = await this.get(id);
-    const [state, latest, active, history] = await Promise.all([
+    const [state, latest, active, history, firstSampleAt] = await Promise.all([
       this.states.get(this.db, id),
       this.metrics.latestDeviceMetrics(id),
       this.db.query<{ n: string }>(`select count(*)::text as n from incidents where device_id = $1 and status <> 'RESOLVED'`, [id]),
       this.states.history(this.db, id, 20),
+      this.metrics.firstInterfaceSampleAt(id),
     ]);
-    return { device, state, latestMetrics: latest, activeIncidents: toNumber(active.rows[0]!.n) ?? 0, stateHistory: history };
+    const reachability = withSimulatedFallback(state.reachability, firstSampleAt);
+    return {
+      device,
+      state: { ...state, reachability },
+      latestMetrics: latest,
+      activeIncidents: toNumber(active.rows[0]!.n) ?? 0,
+      stateHistory: history,
+    };
   }
 
   /** Health + latest CPU / memory / latency for the given devices (all devices when ids is undefined), set-based. */
@@ -284,30 +305,38 @@ export class DeviceService {
       cpu: number | null;
       memory: number | null;
       latency: number | null;
+      first_sample_at: Date | null;
     }>(
       `select d.id, d.name, d.host, d.enabled, s.reachability_state, s.reachability_since, s.snmp_state, s.last_poll_at, s.last_error,
          (select count(*)::text from incidents i where i.device_id = d.id and i.status <> 'RESOLVED') as active,
          (select value from device_metric_samples m where m.device_id = d.id and m.metric = 'cpu_pct' and m.status = 'ok' order by time desc limit 1) as cpu,
          (select value from device_metric_samples m where m.device_id = d.id and m.metric = 'memory_pct' and m.status = 'ok' order by time desc limit 1) as memory,
-         (select value from device_metric_samples m where m.device_id = d.id and m.metric = 'icmp_latency_ms' and m.status = 'ok' order by time desc limit 1) as latency
+         (select value from device_metric_samples m where m.device_id = d.id and m.metric = 'icmp_latency_ms' and m.status = 'ok' order by time desc limit 1) as latency,
+         (select min(time) from interface_samples i where i.device_id = d.id) as first_sample_at
        from devices d join device_state s on s.device_id = d.id ${filter} order by d.name, d.id`,
       params,
     );
-    return r.rows.map((x) => ({
-      deviceId: x.id,
-      name: x.name,
-      host: x.host,
-      enabled: x.enabled,
-      reachability: x.reachability_state,
-      reachabilitySince: x.reachability_since ? new Date(x.reachability_since) : null,
-      snmp: x.snmp_state,
-      lastPollAt: x.last_poll_at ? new Date(x.last_poll_at) : null,
-      lastError: x.last_error,
-      activeIncidents: toNumber(x.active) ?? 0,
-      cpuPct: toNumber(x.cpu),
-      memoryPct: toNumber(x.memory),
-      latencyMs: toNumber(x.latency),
-    }));
+    return r.rows.map((x) => {
+      const reachability = withSimulatedFallback(
+        { state: x.reachability_state as HealthSnapshot['state'], failures: 0, successes: 0, since: x.reachability_since ? new Date(x.reachability_since) : null },
+        x.first_sample_at ? new Date(x.first_sample_at) : null,
+      );
+      return {
+        deviceId: x.id,
+        name: x.name,
+        host: x.host,
+        enabled: x.enabled,
+        reachability: reachability.state,
+        reachabilitySince: reachability.since,
+        snmp: x.snmp_state,
+        lastPollAt: x.last_poll_at ? new Date(x.last_poll_at) : null,
+        lastError: x.last_error,
+        activeIncidents: toNumber(x.active) ?? 0,
+        cpuPct: toNumber(x.cpu),
+        memoryPct: toNumber(x.memory),
+        latencyMs: toNumber(x.latency),
+      };
+    });
   }
 
   async ensureExists(id: string): Promise<void> {
